@@ -5,11 +5,4 @@ module.exports = {
     BIGSHIP_PASSWORD: "Yantratools#2602",
     RAZORPAY_ID:"rzp_live_mJ7dDLo6ahgNWO",
     RAZORPAY_SECRET:"bMHihICbaZKHIKsjb7nQkmvs",
-    AWS_REGION:"ap-south-1",
-    AWS_ACCESS_KEY_ID:"",
-    AWS_SECRET_ACCESS_KEY:"",
-    AWS_BUCKET_NAME:"yantra-bucket",
-    SMS_AUTH_KEY:"412959AHFdeHOz6628f475P1",
-    SMS_TEMPLATE_ID:"67aee2efd6fc050f8a2f4e72",
-    OTP_TEMPLATE_ID:"662a2773d6fc054fe5492023"
   };
