@@ -7,6 +7,12 @@ const sliderSchema = new mongoose.Schema({
     photo:{
         type:String
     },
+    title:{
+        type:String
+    },
+    subtitle:{
+        type:String
+    },
     published:{
         type:Number
     },

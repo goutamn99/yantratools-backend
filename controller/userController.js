@@ -9,6 +9,7 @@ const Address = require('../model/Address');
 const Conversation = require('../model/Conversation');
 const OrderDetail = require('../model/OrderDetail');
 const Product = require('../model/Product');
+const Coupon = require('../model/Coupon');
 const BusinessSetting = require('../model/BusinessSetting');
 const PaymentMode = require("../model/PaymentModes");
 const Razorpay = require('razorpay');
@@ -90,16 +91,16 @@ module.exports = {
           const template = '662a2773d6fc054fe5492023';
   
           // Send OTP using the external API (MSG91 in this case)
-         // const otpResponse =  await axios.post(`https://control.msg91.com/api/v5/otp`, {
-         //      template_id: template,
-         //      mobile: fullPhoneNumber,
-         //      authkey: authkey,
-         //      OTP: otp
-         //  }, {
-         //      headers: {
-         //          'Content-Type': 'application/JSON'
-         //      }
-         //  });
+         const otpResponse =  await axios.post(`https://control.msg91.com/api/v5/otp`, {
+              template_id: template,
+              mobile: fullPhoneNumber,
+              authkey: authkey,
+              OTP: otp
+          }, {
+              headers: {
+                  'Content-Type': 'application/JSON'
+              }
+          });
           
         if(user){
           user.otp = otp;
@@ -126,7 +127,7 @@ module.exports = {
         // Send OTP to user's phone
         // Here, you should integrate with an SMS gateway to send the OTP
   
-        res.json({ success: true,msg: "OTP sent to your phone "+otp });
+        res.json({ success: true,msg: "OTP sent to your phone " });
       }
       else{
         res.json({ success: false,msg: "Invalid phone number" });
@@ -143,11 +144,11 @@ module.exports = {
     try {
       let user = await User.findOne({ phone });
       if (!user) {
-        return res.status(400).json({ success:false, msg: "Invalid phone number or OTP" });
+        return res.status(400).json({ success: false, msg: "Invalid phone number or OTP" });
       }
 
       if (user.otp !== otp || user.otpExpires < Date.now()) {
-        return res.status(400).json({ success:false, msg: "Invalid or expired OTP" });
+        return res.status(400).json({ success: false, msg: "Invalid or expired OTP" });
       }
 
       const payload = {
@@ -155,24 +156,28 @@ module.exports = {
           id: user.usr_id,
         },
       };
-      
-      jwt.sign(
-        payload,
-        "mySecretToken",
-        { expiresIn: '7d' },
-        (err, token) => {
-          if (err) throw err;
-          res.json({ success:true, token,user_type:user.user_type });
-        }
-      );
 
-      // Clear the OTP after successful login
+      // Clear the OTP before generating token
       user.otp = null;
       user.otpExpires = null;
       await user.save();
+
+      // Generate JWT
+      const token = jwt.sign(payload, "mySecretToken", { expiresIn: '7d' });
+
+      // ✅ Set HttpOnly cookie instead of returning token
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure: true,         // ⚠️ only works over HTTPS!
+        sameSite: 'Strict',   // or 'Lax' if needed
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+
+      return res.json({ success: true, user_type: user.user_type, user });
+
     } catch (err) {
       console.error(err.message);
-      res.status(500).send("Server error");
+      return res.status(500).send("Server error");
     }
   },
   updateProfile: async function(req,res){
@@ -216,11 +221,54 @@ module.exports = {
       // Save the updated user
       await user.save();
   
-      return res.status(200).json({ success:true, msg: 'Your Profile has been updated successfully!' });
+      return res.status(200).json({ success:true, msg: 'Your Profile has been updated successfully!', user: user });
     } catch (error) {
       return res.status(500).json({ success:false , msg: 'Sorry! Something went wrong.' });
     }
   
+    
+  },
+
+  addUpdateAddress: async function(req, res) {
+    const userId = req.userId;
+    const user = await User.findOne({usr_id:userId});
+    const addressId = req.body.address_id;
+    if(addressId){
+      let address = await Address.findOne({address_id:addressId});
+      address.address = req.body.address;
+      address.country = req.body.country;
+      address.city = req.body.city;
+      address.postal_code = req.body.postal_code;
+      address.phone = req.body.phone;
+      address.alt_number = req.body.alt_number;
+      await address.save();
+      return res.status(200).json({ success:true, msg: 'Your address has been updated successfully!'});
+    }else{
+      let oldAddId = await Address.findOne({}).sort({address_id:-1});       
+      let address = new Address({
+            user_id: req.userId,
+            address: req.body.address,
+            country: req.body.country,
+            city: req.body.city,
+            postal_code: req.body.postal_code,
+            phone: req.body.phone,
+            alt_number:req.body.alt_number
+        });
+      if(oldAddId){
+        address.address_id = Number(oldAddId.address_id) + 1;
+      }
+      else{
+        address.address_id = 1;
+        
+      }
+      await address.save();
+      user.name = req.body.name;
+      if(req.body.email){
+        user.email = req.body.email;
+      }
+      await user.save();
+      return res.status(200).json({ success:true, msg: 'New address added successfully!'});
+    }    
     
   },
   getDashboardData: async function(req,res){
@@ -262,7 +310,7 @@ module.exports = {
   },
   getUserData: async function(req,res){    
     try{
-      let user = await User.findOne({usr_id:req.userId}).select('name avatar_original user_type phone');
+      let user = await User.findOne({usr_id:req.userId}).select('usr_id name avatar_original user_type phone');
       let wishListCount = await Wishlist.countDocuments({user_id:req.userId}); 
       let conversationCount = await Conversation.countDocuments({sender_id:req.userId,sender_viewed:0})
       res.status(200).json({success:true,data:{user,wishListCount,conversationCount}});
@@ -288,7 +336,7 @@ module.exports = {
 
     try{
       let user = await User.findOne({usr_id:req.userId}).select('name phone email address country city postal_code');
-      let address = await Address.find({user_id:req.userId}); 
+      let address = await Address.find({user_id:req.userId}).sort({address_id:-1}); 
       res.status(200).json({success:true,data:{user,address}});
     }
     catch(err){
@@ -440,7 +488,8 @@ module.exports = {
       const check = await Wishlist.countDocuments({user_id:req.userId,product_id:req.body.product_id});
 
       if(check > 0){
-        res.status(200).json({success:false,msg:"Item Already in your Wishlist"});
+        const wishlist = await Wishlist.deleteOne({user_id:req.userId,product_id:req.body.product_id});
+        res.status(200).json({success:true,msg:"Item removed from your wishlist"});
       }
       else{
       const lastPrd = await Wishlist.findOne({}).sort({wish_id: -1});
@@ -454,7 +503,7 @@ module.exports = {
 
       const wish = await Wishlist.create(objToInsert);
        
-      res.status(200).json({success:true,msg:"Item added to your Wishlist!"});
+      res.status(200).json({success:true,msg:"Item added to your wishlist!"});
   
       }
 
@@ -464,6 +513,81 @@ module.exports = {
     }
     
   },
+  removeWishlist: async function(req, res) {
+    try{
+      const wishlist = await Wishlist.deleteOne({wish_id:req.body.wish_id});
+      res.status(200).json({success:true,msg:'Delete Success'});
+    }
+    catch(error){
+      res.status(400).json({success:false,msg:'Internal server Error'});
+    }
+  },
+  applyCoupon: async function(req,res){
+    try {
+      // const coupons = [
+      //   { code: "DISCOUNT10", discountPercent: 10 },
+      //   { code: "SAVE50", discountAmount: 50 }
+      // ];
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const coupons = await Coupon.find({
+        status: 'active',
+        valid_from: { $lte: today },
+        valid_to: { $gte: today }
+      });
+
+      const { coupon_code, cart_total } = req.body;
+
+      // Validate request body
+      if (!coupon_code || typeof cart_total !== "number") {
+        return res.status(400).json({
+          success: false,
+          msg: "Coupon code and cart total are required."
+        });
+      }
+
+      // Find the coupon
+      const coupon = coupons.find(
+        c => c.code.toLowerCase() === coupon_code.toLowerCase()
+      );
+
+      if (!coupon) {
+        return res.status(404).json({
+          success: false,
+          msg: "Invalid coupon code."
+        });
+      }
+
+      let discount = 0;
+      let finalTotal = cart_total;
+
+      // Apply discount
+      if (coupon.type=='percentage') {
+        discount = (cart_total * coupon.discount) / 100;
+        finalTotal = cart_total - discount;
+      } else if (coupon.type=='flat') {
+        discount = coupon.discount;
+        finalTotal = Math.max(cart_total - discount, 0); // avoid negative total
+      }
+
+      let discount_data = {
+        discount_amount: discount,
+        total_amount: finalTotal
+      }
+
+      return res.status(200).json({
+        success: true,
+        msg: "Coupon applied successfully.",
+        data: discount_data
+      });
+    } catch (err) {
+      console.error("Error applying coupon:", err);
+      return res.status(500).json({
+        success: false,
+        msg: "Server error."
+      });
+    }
+  },
   checkoutOrder: async function(req,res){
     
 try {
@@ -472,25 +596,16 @@ try {
       // Step 1: Handling checkout information
       if (req.body.payment_option) {
           // Collect shipping info from request
-          let shipping_info = {
-              name: req.body.name,
-              email: req.body.email,
-              address: req.body.address,
-              cust_gst_num: req.body.cust_gst_num,
-              country: req.body.country,
-              city: req.body.city,
-              postal_code: req.body.postal_code,
-              phone: req.body.phone,
-              alt_number: req.body.alt_number,
-              checkout_type: req.body.checkout_type,
-          };
-
-  
+          let shipping_info = {};
+          let address = {};
           // Store address in the database if user is authenticated
           if (req.userId) {
+            const user = await User.findOne({usr_id:req.userId});
             let oldAddId = await Address.findOne({}).sort({address_id:-1});
-        
-              let address = new Address({
+            if(req.body.address_id){
+              address = await Address.findOne({address_id:req.body.address_id});              
+            }else{              
+              address = new Address({
                   user_id: req.userId,
                   address: req.body.address,
                   country: req.body.country,
@@ -507,6 +622,21 @@ try {
                 
               }
               await address.save();
+            }
+
+            shipping_info = { 
+                name: user.name,
+                email: user.email,
+                address: address.address,
+                cust_gst_num: address.cust_gst_num,
+                country: address.country,
+                city: address.city,
+                postal_code: address.postal_code,
+                phone: address.phone,
+                alt_number: address.alt_number,
+                checkout_type: address.checkout_type,
+            };
+              
           }
 
           // Step 2: Creating and storing the order
@@ -563,9 +693,9 @@ try {
 
                   subtotal += Number(cartItem.total_price);
 
-                  let taxPrice = (Number(cartItem.total_price) * cartItem.tax/100);
+                  let taxPrice = (Number(cartItem.total_price) * product.tax/100);
 
-                  tax += Math.round(Number(taxPrice) * (cartItem.tax/100));
+                  tax += Math.round(Number(taxPrice) * (product.tax/100));
 
                   let product_variation = cartItem.variant;
 
@@ -590,7 +720,7 @@ try {
                       product_id: product.prd_id,
                       variation: product_variation,
                       price: cartItem.total_price,
-                      tax: Math.round(taxPrice * (cartItem.tax/100)),
+                      tax: Math.round(taxPrice * (product.tax/100)),
                       product_referral_code: cartItem.product_referral_code,
                       quantity: cartItem.qty,
                       payment_status:'unpaid',
@@ -606,12 +736,12 @@ try {
                   }
 
                   // Calculate and store shipping cost
-                  if (cartItem.shipping_type === 'home_delivery') {
+                  if (product.shipping_type === 'home_delivery') {
                     // let shpcost = await Product.findOne({prd_id:cartItem.prd_id}).select('shipping_cost');
                     //   orderDetail.shipping_cost = shpcost.shipping_cost
                     //   shipping += Number(orderDetail.shipping_cost);
                   } else {
-                      orderDetail.shipping_cost = cartItem.shipping_cost;
+                      orderDetail.shipping_cost = product.shipping_cost;
                       // orderDetail.pickup_point_id = cartItem.pickup_point;
                       shipping += Number(orderDetail.shipping_cost);
                   }
@@ -620,24 +750,25 @@ try {
 
                   product.num_of_sale += 1;
                   await product.save();
-              }
-
-               console.log(subtotal,tax,shipping);
+              }        
               // return
               
               order.grand_total = Number(subtotal) + Number(shipping);
 
               let payment_mode;
-
-              if(subtotal <=40000){
+              if(subtotal <=10000){
                 payment_mode = await PaymentMode.findOne({amount:10000});
               }
-              else if(subtotal >= 40001 && subtotal <= 80000){
+              else if(subtotal >=10000 && subtotal <=40000){
                 payment_mode = await PaymentMode.findOne({amount:40000});
+              }
+              else if(subtotal >= 40001 && subtotal <= 80000){
+                payment_mode = await PaymentMode.findOne({amount:80000});
 
               }
               else if(subtotal >= 80001){
-                payment_mode = await PaymentMode.findOne({amount:80000});
+                //payment_mode = await PaymentMode.findOne({amount:80000});
+                payment_mode = 'Full_Payment';
                 
               }
               else{
@@ -766,7 +897,7 @@ try {
 
 function generateOTP() {
   // return crypto.randomBytes(3).toString("hex");
-  const otp = crypto.randomInt(1000, 10000);
+  const otp = crypto.randomInt(1000, 9999);
   return otp.toString();
 }
 

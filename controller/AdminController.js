@@ -30,6 +30,7 @@ const moment = require('moment');
 const handlebars = require("handlebars");
 const Staff = require("../model/Staff");
 const Role = require("../model/Role");
+const Coupon = require("../model/Coupon");
 const Message = require("../model/Message");
 const Policy = require("../model/Policy");
 const Slider = require("../model/Slider");
@@ -1559,6 +1560,71 @@ deleteConvById:async function (req, res){
     res.status(500).send('Internal Server Error');
   }
 },
+createCoupon:async function(req,res){
+
+  const lastCoupon = await Coupon.findOne({}).sort({coupon_id:-1});
+
+  const {coupon_id, code, discount, type, status, valid_from, valid_to } = req.body;
+
+  const coupon = new Coupon({
+      coupon_id:lastCoupon? (lastCoupon.coupon_id + 1) : 1,
+      code,
+      discount,
+      type,
+      status,
+      valid_from,
+      valid_to
+  });
+
+  try {
+ 
+     if(coupon_id){
+      await Coupon.findOneAndUpdate({coupon_id:coupon_id},req.body);
+      res.status(200).send({ success:true, message: 'Coupon has been updated successfully' });
+     }
+     else{
+       await coupon.save();
+       res.status(200).send({ success:true, message: 'Coupon has been inserted successfully' });
+     }
+
+  } catch (err) {
+      res.status(500).send({ success:false, message: 'Something went wrong', error: err.message });
+  }
+},
+getAllCouponsAdmin:async function(req, res) {
+  try{
+      let size = req.body.size || 10;
+      let pageNo = req.body.pageNo || 1; 
+      let sort = {created_at : -1};
+      let pagination={};
+      pagination.skip = Number(size * (pageNo - 1));
+      pagination.limit = Number(size) || 0;
+      const totalCoupons = await Coupon.countDocuments();
+    
+      if(totalCoupons > 0){
+        const coupon = await Coupon.find().sort(sort).skip(pagination.skip).limit(pagination.limit);
+
+          res.status(200).json({success:true,data:coupon,total:totalCoupons});
+      }else{
+          res.status(200).json({success:true,data:[],total:totalCoupons}); 
+      }
+
+  }
+  catch(error) {
+    res.status(500).send('Internal Server Error');
+  }
+},
+getCouponById:async function(req,res){
+  try{
+    const coupon = await Coupon.findOne({ coupon_id: req.params.id });
+
+     res.status(200).json({ success: true, data:coupon});
+  }
+  catch(error) {
+    res.status(500).send('Internal Server Error');
+  }
+
+},
 createCategory:async function(req,res){
   const {category_id,name,slug,commision_rate,banner,icon,digital,meta_title,meta_description} = req.body;
 
@@ -2013,7 +2079,7 @@ getAllStaffAdmin:async function(req, res){
   let pagination={};
   pagination.skip = Number(size * (pageNo - 1));
   pagination.limit = Number(size) || 0;
-  const totalStaff = await Staff.find().countDocuments();
+  const totalStaff = await Staff.countDocuments();
 
   if(totalStaff>0){
     const staff = await Staff.find().sort(sort).skip(pagination.skip).limit(pagination.limit);
@@ -2218,10 +2284,12 @@ createSlider:async function(req,res){
 
   const lastSlider = await Slider.findOne({}).sort({slider_id:-1});
 
-  const {slider_id,link,photo } = req.body;
+  const {slider_id,title,subtitle,link,photo } = req.body;
 
   const slider = new Slider({
       slider_id:lastSlider? (lastSlider.slider_id + 1) : 1,
+      title,
+      subtitle,
       link,
       photo,
       published:1
@@ -2423,6 +2491,7 @@ createStaff:async function(req, res){
 
    try {
     const lastStaff = await Staff.findOne({}).sort({staff_id:-1});
+    const lastUser = await User.findOne({}).sort({usr_id:-1});
     // Check if a user with the given email already exists
     // Hash the password
     const hashedPassword = await bcrypt.hash(req.body.password, 10);
@@ -2451,7 +2520,7 @@ createStaff:async function(req, res){
       }
           // Create and save the new user
     const user = new User({
-      staff_id: lastStaff ? (lastStaff.staff_id + 1) : 1,
+      usr_id: lastUser ? (lastUser.usr_id + 1) : 1,
       name: req.body.name,
       email: req.body.email,
       phone: req.body.mobile,

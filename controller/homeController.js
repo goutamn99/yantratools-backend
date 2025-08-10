@@ -5,6 +5,7 @@ const homeCategory = require("../model/HomeCategory");
 const bannerModel = require("../model/Banner");
 const brandModel = require("../model/Brand");
 const sliderModel = require("../model/Slider");
+const Wishlist = require('../model/Wishlist');
 const subcategoryModel = require("../model/SubCategory");
 const subsubcategoryModel = require("../model/SubSubCategory");
 const generalsettingModel = require("../model/GenralSetting");
@@ -22,6 +23,7 @@ const currencyModel = require('../model/Currency');
 const countryModel = require('../model/Country');
 const paymentModeModel = require('../model/PaymentModes');
 const RequestCallback = require("../model/RequestCallback");
+const BulkPurchaseEnquiry = require("../model/BulkPurchaseEnquiry");
 const Reviews = require("../model/Reviews");
 const Questions = require("../model/Question");
 const bcrypt = require("bcryptjs");
@@ -40,8 +42,8 @@ module.exports = {
     try {
       const products = await productModel
         .find({ published: 1, is_best_selling:1 })
-        .sort({ num_of_sale: -1 })
-        .limit(12).select('prd_id name slug photos unit_price discount rating is_best_selling').exec();
+        .sort({ created_at: -1 })
+        .limit(12);
 
         const parsedProducts = products.map(product => {
           return {
@@ -96,7 +98,14 @@ module.exports = {
         todays_deal: 1,
       });
 
-      res.status(200).json({ success: true, data: products });
+      const parsedProducts = products.map(product => {
+        return {
+            ...product.toObject(),
+            photos: JSON.parse(product.photos)
+        };
+    });
+
+      res.status(200).json({ success: true, data: parsedProducts });
     } catch (err) {
       res
         .status(500)
@@ -149,7 +158,7 @@ module.exports = {
       const categoryIds = homeCategories.map((cat) => cat.category_id);
   
       // Step 3: Fetch all categories and products in a single batch query
-      const categories = await categoryModel.find({ category_id: { $in: categoryIds } }).select("name slug category_id");
+      const categories = await categoryModel.find({ category_id: { $in: categoryIds } }).select("name slug category_id list_banner");
       const products = await productModel
         .find({ published: 1, category_id: { $in: categoryIds } })
         .sort({ createdAt: -1 });
@@ -170,13 +179,14 @@ module.exports = {
         });
         return map;
       }, {});
-  
+      
       // Step 5: Assemble the final response
       const categoriesWithProducts = homeCategories.map((homeCat) => ({
         homeCategory: {
           ...homeCat.toObject(),
           category_name: categoryMap[homeCat.category_id]?.name || null,
           category_slug: categoryMap[homeCat.category_id]?.slug || null,
+          category_banner: categoryMap[homeCat.category_id]?.list_banner || null,
           category_link: '/category/'+categoryMap[homeCat.category_id]?.slug || null
         },
         products: (productsByCategory[homeCat.category_id] || []).slice(0, 12), // Limit to 12 products
@@ -273,26 +283,37 @@ module.exports = {
   getAllCategoriesPage:async(req,res)=>{
     try {
       const categories = await categoryModel.find({});
-
       const categoriesWithSubcategories = await Promise.all(categories.map(async (cat) => {
-
-        const subcategories = await subcategoryModel.find({category_id: cat.category_id});
-
+        // Count products in this category
+        const categoryProductCount = await productModel.countDocuments({ category_id: cat.category_id });
+        const subcategories = await subcategoryModel.find({ category_id: cat.category_id });
         const subcategoriesWithSubSubcategories = await Promise.all(subcategories.map(async (subcat) => {
-          // console.log(subcat,'p');
+          // Count products in this subcategory
+          const subcategoryProductCount = await productModel.countDocuments({ subcategory_id: subcat.sub_cat_id });
           const subSubcategories = await subsubcategoryModel.find({ sub_category_id: subcat.sub_cat_id });
-          // console.log(subSubcategories,'--');
+          const subSubcategoriesWithCount = await Promise.all(subSubcategories.map(async (subsub) => {
+            const subSubcategoryProductCount = await productModel.countDocuments({ subsubcategory_id: subsub.sub_sub_cat_id });
+
+            return {
+              ...subsub.toObject(),
+              productCount: subSubcategoryProductCount
+            };
+          }));
+
           return {
             ...subcat.toObject(),
-            subSubcategories
+            productCount: subcategoryProductCount,
+            subSubcategories: subSubcategoriesWithCount
           };
         }));
-  
-        return { 
-          ...cat.toObject(), 
-          subcategories: subcategoriesWithSubSubcategories 
+
+        return {
+          ...cat.toObject(),
+          productCount: categoryProductCount,
+          subcategories: subcategoriesWithSubSubcategories
         };
       }));
+
 
       res.status(200).json({ success: true, data: categoriesWithSubcategories });
   } catch (err) {
@@ -492,10 +513,38 @@ getAllFeatureCategories:async function(req, res){
       });
   
       // Filter products by name
-      const filteredProducts = await productModel.find({
-        published: 1,
-        name: { $regex: searchTerm, $options: 'i' }
-      }).limit(10);
+      // const filteredProducts = await productModel.find({
+      //   published: 1,
+      //   $or: [
+      //     { name: { $regex: searchTerm, $options: 'i' } },
+      //     { description: { $regex: searchTerm, $options: 'i' } },
+      //     { tags: { $regex: searchTerm, $options: 'i' } }
+      //   ]
+      // }).limit(10);
+      function escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }
+
+      const conditions = { published: 1 };
+
+      if (searchTerm) {
+        const terms = searchTerm.trim().split(/\s+/).map(escapeRegex);
+
+        const andClauses = terms.map(term => {
+          const wordBoundaryRegex = new RegExp(`\\b${term}\\b`, "i");
+          return {
+            $or: [
+              { name: { $regex: wordBoundaryRegex } },
+              { description: { $regex: wordBoundaryRegex } },
+              { tags: { $regex: wordBoundaryRegex } }
+            ]
+          };
+        });
+
+        conditions.$and = andClauses;
+      }
+
+      const filteredProducts = await productModel.find(conditions).limit(10);
   
       // Find sub-subcategories
       const subsubcategories = await subsubcategoryModel.find({
@@ -512,7 +561,7 @@ getAllFeatureCategories:async function(req, res){
       }).limit(10);
   
       // Render the view or return the result
-      if (keywords.length > 0 || subsubcategories.length > 0 || filteredProducproductModel.length > 0 || shops.length > 0) {
+      if (keywords.length > 0 || subsubcategories.length > 0 || filteredProducts.length > 0 || shops.length > 0) {
          return res.status(200).json({
           success: true,
           products: filteredProducts,
@@ -531,6 +580,9 @@ getAllFeatureCategories:async function(req, res){
     try{
 
       const order = await orderModel.findOne({code:req.body.code});
+      if(!order){
+        res.status(404).json({ success: false, message: 'No order found with the provided code. Please check and try again.' });
+      }
       const userOrder = await userModel.findOne({usr_id:order.user_id});
       let parsedOrder = order.toObject(); 
       parsedOrder.paredAddress = JSON.parse(order.shipping_address);
@@ -583,13 +635,13 @@ getAllFeatureCategories:async function(req, res){
       // const regexQuery = new RegExp(query.split(' ').join('|'), 'i');
 
 
-      if (query) {
-        conditions.$or = [
-            { name: { $regex: query, $options: 'i' } },
-            { description: { $regex: query, $options: 'i' } },
-            { tags: { $regex: query, $options: 'i' } }
-        ];
-    }
+      // if (query) {
+      //     conditions.$or = [
+      //         { name: { $regex: query, $options: 'i' } },
+      //         { description: { $regex: query, $options: 'i' } },
+      //         { tags: { $regex: query, $options: 'i' } }
+      //     ];
+      // }
 
   //   if (query) {
   //     conditions.$or = [
@@ -598,11 +650,63 @@ getAllFeatureCategories:async function(req, res){
   //         { tags: { $regex: regexQuery } }
   //     ];
   // }
+      function escapeRegex(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }
+    
+      if (query) {
+        // split into individual words, ignore extra spaces
+        const terms = query.trim().split(/\s+/).map(escapeRegex); // e.g., ["water","pump","3","inch","petrol"]
 
+        // build an $and where each term must match at least one of the fields
+        const andClauses = terms.map(term => {
+          const wordBoundaryRegex = new RegExp(`\\b${term}\\b`, "i");
+          return {
+            $or: [
+              { name: { $regex: wordBoundaryRegex } },
+              { description: { $regex: wordBoundaryRegex } },
+              { tags: { $regex: wordBoundaryRegex } }
+            ]
+          };
+        });
+
+        conditions.$and = andClauses;
+      }
 
       const brand = await brandModel.findOne({ slug: req.body.brand });
       if (brand) {
           conditions.brand_id = brand.brand_id;
+      }
+      const req_brands = req.body.brand;
+      if (Array.isArray(req_brands) && req_brands.length > 0) {
+          const filter_brands = await brandModel.find({ brand_id: { $in: req_brands } });          
+          if (filter_brands.length > 0) {
+              let brandIds = filter_brands.map(b => b.brand_id);              
+              conditions.brand_id = { $in: brandIds };
+          }
+      }
+
+      const req_ratings = req.body.rating;
+      if (Array.isArray(req_ratings) && req_ratings.length > 0) {
+          const minRating = Math.min(...req_ratings);
+          conditions.rating = { $gte: minRating };
+      }
+
+      const priceRangeStrings = req.body.price_ranges;
+      if (Array.isArray(priceRangeStrings) && priceRangeStrings.length > 0) {
+        const priceConditions = priceRangeStrings.map(range => {
+          const [minStr, maxStr] = range.split('-');
+          const min = Number(minStr.trim());
+          const max = maxStr.trim();
+
+          if (max === '*' || max=='Above') {
+            return { unit_price: { $gte: min } }; // e.g., 10000 and above
+          } else {
+            return { unit_price: { $gte: min, $lte: Number(max) } }; // bounded range
+          }
+        });
+
+        conditions.$or = priceConditions;
       }
 
       if (seller_id) {
@@ -611,7 +715,7 @@ getAllFeatureCategories:async function(req, res){
               conditions.user_id = seller.user_id;
           }
       }
-      console.log(brand);
+      
       const category = await categoryModel.findOne({ slug: req.body.category });
       if (category) {
           conditions.category_id = category.category_id;
@@ -686,23 +790,23 @@ getAllFeatureCategories:async function(req, res){
 
           
       }      
-      console.log({ conditions });
+      
       let productsQuery = productModel.find(conditions);      
-      if (min_price && max_price) {
-          productsQuery = productsQuery.where('unit_price').gte(min_price).lte(max_price);
-      }
-      else{
-         min_price = await productModel.findOne(conditions).sort({ unit_price: 1 }).select('unit_price');
-         max_price = await productModel.findOne(conditions).sort({ unit_price: -1 }).select('unit_price')
-      }
+      // if (min_price && max_price) {
+      //     productsQuery = productsQuery.where('unit_price').gte(min_price).lte(max_price);
+      // }
+      // else{
+      //    min_price = await productModel.findOne(conditions).sort({ unit_price: 1 }).select('unit_price');
+      //    max_price = await productModel.findOne(conditions).sort({ unit_price: -1 }).select('unit_price')
+      // }
 
-      if (query) {
-          productsQuery = productsQuery.or([
-            { name: { $regex: query, $options: 'i' } },
-            { description: { $regex: query, $options: 'i' } },
-            { tags: { $regex: query, $options: 'i' } }
-          ]);
-      }
+      // if (query) {
+      //     productsQuery = productsQuery.or([
+      //       { name: { $regex: query, $options: 'i' } },
+      //       { description: { $regex: query, $options: 'i' } },
+      //       { tags: { $regex: query, $options: 'i' } }
+      //     ]);
+      // }
 
       if (sort_by) {
           switch (sort_by) {
@@ -858,11 +962,13 @@ getAllFeatureCategories:async function(req, res){
   },
   getCategoryDetails: async(req, res) => {
     try {
+      let cms_content = '';
       const cat_slug = req.params.cat_slug;
       const category = await categoryModel.findOne({ slug: cat_slug }).select('category_id name banner icon slug meta_title meta_description');
       if (!category) {
         return res.status(404).json({ success: false, message: 'Category not found' });
       }
+      cms_content = await cmsModel.find({ category: category.category_id, blog_type: 1 });
       //Find all subcategories for this category
       const subcategories = await subcategoryModel.find({category_id:category.category_id}).select('sub_cat_id name slug meta_title meta_description');
       //For each subcategory, fetch related products
@@ -870,9 +976,9 @@ getAllFeatureCategories:async function(req, res){
       subcategories.map(async (subcat) => {
         const rawProducts = await productModel
           .find({ subcategory_id: subcat.sub_cat_id })
-          .select('prd_id name price slug photos unit_price purchase_price discount rating is_best_selling')
+          .select('prd_id name price slug photos unit_price purchase_price discount rating is_best_selling current_stock')
           .limit(12);
-
+        const productCount = await productModel.countDocuments({ subcategory_id: subcat.sub_cat_id });
         const products = rawProducts.map(product => {
           const parsedProduct = product.toObject();
           try {
@@ -886,13 +992,15 @@ getAllFeatureCategories:async function(req, res){
         return {
           ...subcat.toObject(),
           category_link: link,
-          products: products
+          products: products,
+          productCount: productCount
         };
       })
     );
       const respData = {
         category: category,
-        subcategories: subcategoriesWithProducts
+        subcategories: subcategoriesWithProducts,
+        cms_content
       }
       res.status(200).json({ success: true, data: respData });
     } catch (err) {
@@ -979,7 +1087,7 @@ getAllFeatureCategories:async function(req, res){
             userModel.findOne({usr_id:detailedProduct.user_id}).select('usr_id name user_type'),
             shopModel.findOne({user_id:detailedProduct.user_id}).select('name'),
             sellerModel.findOne({user_id:detailedProduct.user_id}),
-            productModel.find(relatedFilter).sort({ num_of_sale: -1 }).select('name slug photos unit_price discount rating').limit(30)
+            productModel.find(relatedFilter).sort({ num_of_sale: -1 }).select('name slug photos unit_price discount rating current_stock').limit(30)
         ]);
 
         if (product_referral_code) {
@@ -993,13 +1101,43 @@ getAllFeatureCategories:async function(req, res){
             photos = JSON.parse(detailedProduct.photos);
         }
 
+        let is_wishlist = false;        
+        if(req.query.user_id){
+          const check = await Wishlist.countDocuments({user_id:req.query.user_id,product_id:detailedProduct.prd_id});
+          if(check > 0){
+            is_wishlist = true;
+          }
+        }        
 
-        const parsedProducts = relatedProduct.map(product => {
-          return {
+        const parsedProducts = await Promise.all(
+          relatedProduct.map(async product => {
+            let rel_wishlist = false;
+
+            if (req.query.user_id) {
+              const check = await Wishlist.countDocuments({
+                user_id: req.query.user_id,
+                product_id: product.prd_id, // use the current product, not detailedProduct
+              });
+              if (check > 0) {
+                rel_wishlist = true;
+              }
+            }
+
+            // safe parse for photos
+            let photos;
+            try {
+              photos = JSON.parse(product.photos);
+            } catch (e) {
+              photos = []; // or fallback however you want
+            }
+
+            return {
               ...product.toObject(),
-              photos: JSON.parse(product.photos)
-          };
-      });
+              photos,
+              is_wishlist:rel_wishlist,
+            };
+          })
+        );
 
         // Convert photos to WebP if needed
         // if (detailedProduct.photos && detailedProduct.photos.length > 0) {
@@ -1017,7 +1155,8 @@ getAllFeatureCategories:async function(req, res){
         const data = {
           detailedProduct: {
             ...freshProduct.toObject(),
-            photos
+            photos,
+            is_wishlist
         },
             category_name: category?.name,
             sub_cat_name: subCategory?.name,
@@ -1060,7 +1199,7 @@ getAllFeatureCategories:async function(req, res){
     const sort = { purchase_price: 1,num_of_sale:-1 };
     const totalP = await productModel.countDocuments(filter);
     if(totalP>0){
-      const prdts = await productModel.find(filter).select('name slug photos unit_price discount rating').sort(sort).skip(query.skip).limit(query.limit);
+      const prdts = await productModel.find(filter).select('name slug photos unit_price discount rating current_stock').sort(sort).skip(query.skip).limit(query.limit);
       const parsedProducts = prdts.map(product => {
         return {
             ...product.toObject(),
@@ -1073,7 +1212,7 @@ getAllFeatureCategories:async function(req, res){
     }
 
   },
-  getPolicyByName: async (req, res) => {
+  getPageContent: async (req, res) => {
     try {
       const id = req.params.id;
 
@@ -1087,33 +1226,53 @@ getAllFeatureCategories:async function(req, res){
     }
   },
   getAllReviewsByProduct: async function (req, res) { 
-  let id = req.body.id
+  try {
+    let id = req.body.id;
     let size = req.body.size || 2;
-    let pageNo = req.body.pageNo || 1; 
-    const query={};
+    let pageNo = req.body.pageNo || 1;
+
+    const query = {};
     query.skip = Number(size * (pageNo - 1));
     query.limit = Number(size) || 0;
     const sort = { review_id: -1 };
-    const totalR = await reviewModel.countDocuments({product_id:id,status:1});
-    if(totalR>0){
-      const review = await reviewModel.find({product_id:id,status:1}).sort(sort).skip(query.skip).limit(query.limit);
+
+    const totalR = await reviewModel.countDocuments({ product_id: id, status: 1 });
+
+    // Calculate average rating
+    const avgRatingAgg = await reviewModel.aggregate([
+      { $match: { product_id: id, status: 1 } },
+      { $group: {
+        _id: "$product_id",
+        avgRating: { $avg: "$rating" }
+      }}
+    ]);
+
+    const avgRating = avgRatingAgg.length > 0 ? avgRatingAgg[0].avgRating : 0;
+
+    if (totalR > 0) {
+      const review = await reviewModel.find({ product_id: id, status: 1 })
+        .sort(sort)
+        .skip(query.skip)
+        .limit(query.limit);
+
       const enrichedReviews = await Promise.all(
         review.map(async (review) => {
           const userId = review.user_id;
 
-          const userInfo = await userModel.findOne({usr_id:userId}).select('name avatar_original');
+          const userInfo = await userModel.findOne({ usr_id: userId }).select('name avatar_original');
+
           // Fetch orders for the user with `payment_status` = 'paid'
-          const userOrders = await orderModel.find({ 
-            user_id: userId, 
-            payment_status: 'paid' // Check for paid orders only
+          const userOrders = await orderModel.find({
+            user_id: userId,
+            payment_status: 'paid'
           });
+
           let isVerifiedPurchase = false;
 
-          // Check if any paid order contains the product
           for (const order of userOrders) {
-            const orderDetails = await orderDetailModel.find({ 
-              order_id: order.ord_id, 
-              product_id: id 
+            const orderDetails = await orderDetailModel.find({
+              order_id: order.ord_id,
+              product_id: id
             });
 
             if (orderDetails.length > 0) {
@@ -1130,14 +1289,26 @@ getAllFeatureCategories:async function(req, res){
         })
       );
 
-
-
-        res.status(200).json({success:true,data:enrichedReviews,total:totalR});
-    }else{
-        res.status(200).json({success:false,data:[],total:totalR}); 
+      res.status(200).json({
+        success: true,
+        data: enrichedReviews,
+        total: totalR,
+        averageRating: avgRating
+      });
+    } else {
+      res.status(200).json({
+        success: false,
+        data: [],
+        total: totalR,
+        averageRating: 0
+      });
     }
-   
-},
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+}
+,
 getAllQuestionByProduct: async function (req, res) {
   let id = req.body.id
   let size = req.body.size || 5;
@@ -1306,6 +1477,54 @@ insertRequestCallBack:async function (req, res){
 
   
 },
+bulkPurchaseEnquiry:async function(req, res) {
+  try{
+    const lastId = await BulkPurchaseEnquiry.findOne().sort({bulk_id:-1});
+    // console.log(lastId);
+    // return;
+    
+    let reqBody = {};
+  
+    if(lastId){
+      reqBody = {
+        bulk_id: Number(lastId.bulk_id) + 1,
+        name:req.body.name,
+        phone:req.body.phone,
+        email:req.body.email,
+        pincode:req.body.pincode,
+        city:req.body.city,
+        state:req.body.state,
+        remark:req.body.remark,
+        urgency:req.body.urgency,
+        quality:req.body.quality,
+        target_price:req.body.target_price,
+        product_id:req.body.product_id
+       };
+    }
+    else{
+      reqBody = {
+        bulk_id: 1,
+        name:req.body.name,
+        phone:req.body.phone,
+        email:req.body.email,
+        pincode:req.body.pincode,
+        city:req.body.city,
+        state:req.body.state,
+        remark:req.body.remark,
+        urgency:req.body.urgency,
+        quality:req.body.quality,
+        target_price:req.body.target_price,
+        product_id:req.body.product_id
+       };
+    }
+  
+    const reqc = await BulkPurchaseEnquiry.create(reqBody);
+    res.status(200).json({ success: true, msg:'You will be contacted Shortly..' });
+  }
+  catch(err){
+    res.status(500).json({ success: false, message: 'Server Error', error: err.message });
+  }
+},
 
 insertReview:async function (req, res){
   // console.log(req.body);
@@ -1316,12 +1535,12 @@ insertReview:async function (req, res){
     if(req.body.token){
       jwt.verify(token, "mySecretToken", (err, decodedToken) => {
         if (err) return res.sendStatus(403);
-        reqBody.user_id = decodedToken.user.id;
+        reqBody.user_id = decodedToken.user.usr_id;
         next();
       });
     }
     else{
-      reqBody.user_id = null;
+      reqBody.user_id = req.body.user_id;
     }
 
     const lastId = await Reviews.findOne().sort({review_id:-1});
@@ -1330,6 +1549,7 @@ insertReview:async function (req, res){
     if(lastId){
       reqBody = {
         review_id: Number(lastId.review_id) + 1,
+        user_id: reqBody.user_id,
         product_id:req.body.product_id,
         name:req.body.token ? null : req.body.name,
         rating:req.body.rating,
@@ -1342,6 +1562,7 @@ insertReview:async function (req, res){
     else{
       reqBody = {
         review_id: 1,
+        user_id: reqBody.user_id,
         product_id:req.body.product_id,
         name:req.body.token ? null : req.body.name,
         rating:req.body.rating,

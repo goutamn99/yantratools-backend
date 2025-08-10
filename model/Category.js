@@ -14,6 +14,9 @@ const catSchema = new mongoose.Schema({
     banner:{
         type:String
     },
+    list_banner:{
+        type:String
+    },
     icon:{
         type:String
     },

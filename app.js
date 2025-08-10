@@ -1,44 +1,59 @@
-// require('newrelic');
 const express = require('express');
 const mongoose = require('mongoose');
 const app = express();
 const routes = require('./routes/routes');
-var cors = require('cors');
+const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
-const mysql = require('mysql2');
-//middleware
+const cookieParser = require('cookie-parser');
+
+const allowedOrigins = [
+  'http://localhost:4200',
+  'http://31.97.207.9:4000',
+  'https://yantratools.com'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+// Middleware
 app.use(express.json());
-app.use(cors());
-app.use(bodyParser.urlencoded({ extended:true}));
+app.use(cookieParser());
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, 'public')));
 
+// MongoDB Connection
+// const username = 'yantra-user';
+// const password = 'YantraDb_54321';
+// const host = '31.97.207.9';
+// const port = '27017';
+// const dbName = 'yantra-tools-live';
 const username = 'yantra-user';
-const password = "YantraDb%23123";
-const host = '15.206.185.95';
-const port = '27016'; 
-const dbName = 'yantra-tools'; 
+const password = 'YantraDb_54321';
+const host = 'localhost';
+const port = '27017';
+const dbName = 'yantratools';
+const uri = `mongodb+srv://${username}:${encodeURIComponent(password)}@cluster0.3nizni8.mongodb.net/${dbName}?retryWrites=true&w=majority`;
+mongoose.connect(uri)
+  .then(() => {
+    console.log('✅ Database connected');
 
-    mongoose.connect(`mongodb://${username}:${password}@${host}:${port}/${dbName}`).then((result) => {
-        console.log('Database connected');
-        app.listen(3000,()=>{
-            console.log('Server is running on port 3000');
-        });
-    })
-    .catch((error)=>{
-        console.log(error);
-    })
+    // Start HTTP Server on localhost
+    app.listen(3000, () => {
+      console.log('🚀 Server is running at http://localhost:3000');
+    });
+  })
+  .catch((error) => {
+    console.log('❌ Database connection failed');
+    console.error(error);
+  });
 
-    // mongoose.connect('mongodb://127.0.0.1:27017/yantra-final').then((result) => {
-    //     console.log('Database connected');
-    //     app.listen(3000,()=>{
-    //         console.log('Server is running on port 3000');
-    //     });
-    // })
-    // .catch((error)=>{
-    //     console.log(error);
-    // })
-
-
-//routes
+// Routes
 app.use('/api/v1', routes);

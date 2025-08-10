@@ -76,6 +76,9 @@ const productSchema = new mongoose.Schema({
     published:{
         type:Number
     },
+    is_best_selling: {
+        type: Number
+    },
     featured:{
         type:Number
     },

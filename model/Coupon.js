@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 
 const couponSchema = new mongoose.Schema({
-    type:{
-        type:String
+    coupon_id:{
+     type:Number
     },
     code:{
         type:String
@@ -13,14 +13,17 @@ const couponSchema = new mongoose.Schema({
     discount:{
         type:String
     },
-    discount_type:{
+    type:{
         type:String
     },
-    start_date:{
+    status:{
         type:String
     },
-    end_date:{
-        type:String
+    valid_from:{
+        type:Date
+    },
+    valid_to:{
+        type:Date
     },
     created:{
         type: Date,

@@ -1,33 +1,42 @@
 const mongoose = require('mongoose');
 
-const reviewSchema = new mongoose.Schema({
-    review_id:{
-        type:Number
+const bulkPurchaseSchema = new mongoose.Schema({
+    bulk_id:{
+      type:Number
     },
     product_id:{
-        type:Number
-    },
-    user_id:{
         type:Number
     },
     name:{
         type:String
     },
-    rating:{
-        type:Number
-    },
-    comment:{
+    email:{
         type:String
     },
-    image:{
+    phone:{
         type:String
     },
-    status:{
-        type:Number
+    pincode:{
+        type:String
     },
-    viewed:{
-        type:Number
+    city:{
+        type:String
     },
+    state:{
+        type:String
+    },
+    remark:{
+        type:String
+    },
+    urgency:{
+        type:String
+    },
+    quality:{
+        type:String
+    },
+    target_price:{
+        type:String
+    },    
     created_at:{
         type: Date,
         default: function() {
@@ -42,11 +51,6 @@ const reviewSchema = new mongoose.Schema({
     }
 })
 
-const Reviews = mongoose.model('review',reviewSchema);
+const BulkPurchaseEnquiry = mongoose.model('bulk_purchase_enquiry',bulkPurchaseSchema);
 
-module.exports = Reviews;
-
-// [{
-//     type: mongoose.Schema.Types.ObjectId,
-//     ref: 'user'
-//   }]
+module.exports = BulkPurchaseEnquiry;

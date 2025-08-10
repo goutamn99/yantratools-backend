@@ -25,11 +25,8 @@ const s3 = new S3({
 });
 
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  // Check if the authorization header is present and starts with 'Bearer'
-  const token = authHeader && authHeader.split(' ')[1];
-    // const token = req.headers['authorization'];
-    // if (!token) return res.sendStatus(401);
+    const token = req.cookies.token;
+    if (!token) return res.status(401).json({ message: 'Not authenticated' });
   
     jwt.verify(token, "mySecretToken", (err, decodedToken) => {
       if (err) return res.sendStatus(403);
@@ -149,6 +146,16 @@ const authenticateToken = (req, res, next) => {
 router.post('/register',userController.register);
 router.post('/sendOtp',userController.sendOtp);
 router.post('/verifyOtp',userController.verifyOtp);
+router.post('/logout', (req, res) => {
+  res.clearCookie('token', {
+    path: '/',           // must match the path used when setting the cookie
+    httpOnly: false,     // match what was set
+    secure: true,        // use true if using HTTPS
+    sameSite: 'Lax'
+  });
+
+  return res.json({ success: true, message: 'Logged out successfully' });
+});
 
 router.get('/getDashboardData',authenticateToken,userController.getDashboardData);
 router.get('/getSidebarData',authenticateToken,userController.getSidebarData);
@@ -159,9 +166,13 @@ router.post('/getAllOrdersByUser',authenticateToken,userController.getAllOrdersB
 router.post('/getAllConversationByUser',authenticateToken,userController.getAllConversationByUser);
 router.post('/getWishlistByUser',authenticateToken,userController.getWishlistByUser);
 router.post('/insertWishlist',authenticateToken,userController.insertWishlist);
+router.post('/removeWishlist',authenticateToken,userController.removeWishlist);
 router.post('/updateProfile',authenticateToken,userController.updateProfile);
+router.post('/addUpdateAddress',authenticateToken,userController.addUpdateAddress);
+router.post('/applyCoupon',authenticateToken,userController.applyCoupon);
 router.post('/checkoutOrder',authenticateToken,userController.checkoutOrder);
 router.post('/checkoutDone',authenticateToken,userController.checkoutDone);
+router.post('/deleteAddressById',authenticateToken,userController.deleteAddressById);
 
 router.get('/getFeatureSection',homeController.getFeatureSection);
 router.get('/getBestSelling',homeController.getBestSelling);
@@ -187,7 +198,7 @@ router.get('/getHomeCategoryProducts/:catId',homeController.getHomeCategoryProdu
 router.get('/getAllSubCatbyCat/:id',homeController.getAllSubCatbyCat);
 router.get('/getAllSubSubCatbySubCat/:id',homeController.getAllSubSubCatbySubCat);
 router.get('/getProductDetails/:id',homeController.getProductDetails);
-router.get('/getPolicyByName/:id',homeController.getPolicyByName);
+router.get('/getPageContent/:id',homeController.getPageContent);
 router.get('/getBlogBySlug/:id',homeController.getBlogBySlug);
 router.get('/getBusinessSettingByType/:id',homeController.getBusinessSettingByType);
 router.get('/getCurrencyById/:id',homeController.getCurrencyById);
@@ -196,6 +207,7 @@ router.get('/updateOrder/:id',userController.updateOrder);
 router.post('/requestCallback',homeController.insertRequestCallBack);
 router.post('/insertReview',homeController.insertReview);
 router.post('/insertQuestion',homeController.insertQuestion);
+router.post('/bulkPurchaseEnquiry',homeController.bulkPurchaseEnquiry);
 
 //Goutam
 router.get('/getCategoryDetails/:cat_slug', homeController.getCategoryDetails);
@@ -303,6 +315,9 @@ router.get('/getStaffById/:id',AdminController.getStaffById);
 router.post('/createRole',AdminController.createRole);
 router.get('/getRoleById/:id',AdminController.getRoleById);
 router.get('/testEmail',AdminController.emailSend);
+router.post('/createCoupon',AdminController.createCoupon);
+router.post('/getAllCouponsAdmin',AdminController.getAllCouponsAdmin);
+router.get('/getCouponById/:id',AdminController.getCouponById);
 
 //export Excel
 router.get('/exportAllProduct',AdminController.exportAllProduct);
